@@ -6,7 +6,7 @@
     <title>HYDRAULIC_PRESS_MINI.EXE — OVERLAY LIMPIO TIKTOK LIVE</title>
     <style>
         * { box-sizing: border-box; margin: 0; padding: 0; user-select: none; -webkit-user-select: none; }
-        html, body { width: 100%; height: 100%; overflow: hidden; background: #05070d; }
+        html, body { width: 100%; height: 100%; overflow: hidden; background: transparent; }
         body.chroma-body { background: #00ff00 !important; }
         #pressCanvas { display: block; width: 100vw; height: 100vh; cursor: pointer; }
 
@@ -301,9 +301,17 @@
         const WORLD_TOP = 86;              // y del mundo que queda arriba de la arena
         const ARENA = { x: 4, y: 42, w: 292, h: 221 };
         const FONT = 'Impact, "Arial Black", "Haettenschweiler", sans-serif';
-        // Modos por URL:  (nada) = fondo oscuro | ?transparent = fondo transparente | ?chroma = fondo verde
+        // ===== POSICIÓN Y TAMAÑO (por URL) =====
+        //  (nada)        -> chiquito, abajo a la izquierda, fondo transparente
+        //  ?pos=br|tl|tr -> otra esquina (br = abajo derecha, tl = arriba izq., tr = arriba der.)
+        //  ?size=36      -> ancho en % de la pantalla (36 por defecto)
+        //  ?pos=full     -> ocupa toda la pantalla (modo anterior, fondo oscuro)
+        //  ?chroma       -> fondo verde para recortar
         const QP = new URLSearchParams(location.search);
-        const TRANSPARENT = QP.has('transparent');
+        const POS = (QP.get('pos') || 'bl').toLowerCase();
+        const CORNER = ['bl', 'br', 'tl', 'tr'].includes(POS);
+        const SIZE = Math.max(10, Math.min(100, parseFloat(QP.get('size')) || 36));
+        const TRANSPARENT = QP.has('transparent') || CORNER;
         if (TRANSPARENT) {
             document.documentElement.style.background = 'transparent';
             document.body.style.background = 'transparent';
@@ -311,8 +319,24 @@
         let view = { k: 1, ox: 0, oy: 0 };
         function resizeCanvas() {
             const dpr = Math.min(3, window.devicePixelRatio || 1);
-            const cw = Math.max(1, Math.round(window.innerWidth * dpr));
-            const ch = Math.max(1, Math.round(window.innerHeight * dpr));
+            let cssW = window.innerWidth, cssH = window.innerHeight;
+            if (CORNER) {
+                const vw = window.innerWidth, vh = window.innerHeight;
+                // Ancho = SIZE% de la pantalla, pero sin pasar del 34% del alto
+                cssW = Math.min(vw * SIZE / 100, vh * 0.34 * LW / LH);
+                cssH = cssW * LH / LW;
+                const m = Math.round(Math.min(vw, vh) * 0.02);
+                const st = canvas.style;
+                st.position = 'fixed';
+                st.width = cssW + 'px';
+                st.height = cssH + 'px';
+                st.top = POS[0] === 't' ? m + 'px' : 'auto';
+                st.bottom = POS[0] === 'b' ? m + 'px' : 'auto';
+                st.left = POS[1] === 'l' ? m + 'px' : 'auto';
+                st.right = POS[1] === 'r' ? m + 'px' : 'auto';
+            }
+            const cw = Math.max(1, Math.round(cssW * dpr));
+            const ch = Math.max(1, Math.round(cssH * dpr));
             if (canvas.width !== cw || canvas.height !== ch) { canvas.width = cw; canvas.height = ch; }
             const k = Math.min(cw / LW, ch / LH);
             view = { k, ox: (cw - LW * k) / 2, oy: (ch - LH * k) / 2 };
@@ -4690,6 +4714,9 @@
 
         // Conexión automática a TikFinity cada 2.5 segundos
         let ws = null;
+        // TikTok junta los tap-tap rápidos en pocos eventos (y cada evento trae como máximo ~15 likes).
+        // El total de likes de la sala SÍ viene completo, así que lo usamos para recuperar los likes "perdidos".
+        let lastTotalLikes = null;
         const TF_PORT = new URLSearchParams(location.search).get('port') || '21213';
         const TF_HOSTS = ['127.0.0.1', 'localhost'];
         let tfHostIdx = 0;
@@ -4705,14 +4732,28 @@
                 ws = new WebSocket(`ws://${host}:${TF_PORT}/`);
                 ws.onopen = () => {
                     game.wsConnected = true;
+                    lastTotalLikes = null;
                     game.lastEventText = 'Conectado a TikFinity en vivo';
                 };
                 ws.onmessage = (ev) => {
                     try {
                         const msg = JSON.parse(ev.data);
                         if (msg.event === 'like' && msg.data) {
-                            const count = parseInt(msg.data.likeCount, 10) || 1;
-                            const u = tfUser(msg.data, 'viewer');
+                            const d = msg.data;
+                            const batch = Math.max(1, parseInt(d.likeCount, 10) || 1);
+                            const total = Number(d.totalLikeCount ?? d.totalLikes);
+                            let count = batch;
+                            if (Number.isFinite(total) && total > 0) {
+                                if (lastTotalLikes !== null && total > lastTotalLikes) {
+                                    const delta = total - lastTotalLikes;
+                                    // Si el total subió más que este evento, TikTok resumió taps: los recuperamos
+                                    if (delta <= 2000) count = Math.max(batch, delta);
+                                }
+                                if (lastTotalLikes === null || total > lastTotalLikes || total < lastTotalLikes - 5000) {
+                                    lastTotalLikes = total;
+                                }
+                            }
+                            const u = tfUser(d, 'viewer');
                             addPressure(count, u, null);
                         } else if (msg.event === 'gift' && msg.data) {
                             if (msg.data.giftType === 1 && msg.data.repeatEnd === false) return;
