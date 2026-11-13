@@ -1,0 +1,1027 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Overlay Interactivo TikTok LIVE - PNGTuber FX</title>
+  <!-- Tailwind CSS para la interfaz de control flotante -->
+  <script src="https://cdn.tailwindcss.com"></script>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700;800&display=swap" rel="stylesheet" />
+  <style>
+    * {
+      box-sizing: border-box;
+      user-select: none;
+    }
+
+    body {
+      margin: 0;
+      padding: 0;
+      width: 100vw;
+      height: 100vh;
+      overflow: hidden;
+      font-family: 'Inter', sans-serif;
+      /* Fondo ajedrezado oscuro para previsualizar transparencia */
+      background-color: #111827;
+      background-image: 
+        linear-gradient(45deg, #1f2937 25%, transparent 25%), 
+        linear-gradient(-45deg, #1f2937 25%, transparent 25%), 
+        linear-gradient(45deg, transparent 75%, #1f2937 75%), 
+        linear-gradient(-45deg, transparent 75%, #1f2937 75%);
+      background-size: 28px 28px;
+      background-position: 0 0, 0 14px, 14px -14px, -14px 0;
+      transition: background 0.3s ease;
+    }
+
+    /* Modo OBS: Fondo 100% transparente y controles ocultos */
+    body.obs-mode {
+      background: transparent !important;
+      background-image: none !important;
+    }
+
+    body.obs-mode .ui-panel {
+      opacity: 0;
+      pointer-events: none;
+      transform: translateY(20px);
+    }
+
+    body.obs-mode .top-bar {
+      opacity: 0;
+      pointer-events: none;
+      transform: translateY(-20px);
+    }
+
+    canvas {
+      display: block;
+      width: 100%;
+      height: 100%;
+    }
+
+    .ui-panel, .top-bar {
+      transition: all 0.25s cubic-bezier(0.16, 1, 0.3, 1);
+    }
+
+    /* Botones estilo arcade / stream deck */
+    .gift-btn {
+      transition: transform 0.12s ease, box-shadow 0.12s ease;
+    }
+    .gift-btn:active {
+      transform: scale(0.93);
+    }
+  </style>
+</head>
+<body>
+
+  <!-- Barra superior de configuración rápida -->
+  <div class="top-bar fixed top-4 left-4 right-4 z-20 flex flex-wrap items-center justify-between gap-3 pointer-events-none">
+    <!-- Estado de conexión TikFinity WebSocket -->
+    <div class="pointer-events-auto flex items-center gap-3 bg-gray-900/90 backdrop-blur-md border border-gray-700/80 px-4 py-2.5 rounded-2xl shadow-xl">
+      <div class="flex items-center gap-2">
+        <span id="ws-dot" class="w-3 h-3 rounded-full bg-amber-400 animate-pulse"></span>
+        <span id="ws-status" class="text-xs font-semibold text-gray-200">Modo Prueba Local</span>
+      </div>
+      <button id="btn-ws-toggle" class="text-xs bg-indigo-600 hover:bg-indigo-500 text-white font-semibold px-3 py-1.5 rounded-xl transition cursor-pointer">
+        Conectar TikFinity (WS)
+      </button>
+    </div>
+
+    <!-- Controles del personaje y Modo OBS -->
+    <div class="pointer-events-auto flex flex-wrap items-center gap-2.5 bg-gray-900/90 backdrop-blur-md border border-gray-700/80 px-4 py-2 rounded-2xl shadow-xl">
+      <!-- Botón para cargar PNG propio -->
+      <label class="flex items-center gap-2 bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-bold px-3.5 py-2 rounded-xl cursor-pointer transition shadow-md">
+        <span>📁 Subir mi PNG</span>
+        <input type="file" id="avatar-upload" accept="image/*" class="hidden" />
+      </label>
+
+      <!-- Deslizador de tamaño -->
+      <div class="flex items-center gap-2 px-2">
+        <span class="text-xs text-gray-300 font-medium">Tamaño:</span>
+        <input type="range" id="size-slider" min="0.5" max="1.8" step="0.05" value="1" class="w-20 accent-indigo-500 cursor-pointer" />
+      </div>
+
+      <!-- Botón Modo Transparente OBS -->
+      <button id="btn-obs-mode" class="flex items-center gap-1.5 bg-gray-800 hover:bg-gray-700 border border-gray-600 text-gray-100 text-xs font-semibold px-3.5 py-2 rounded-xl transition cursor-pointer" title="También puedes presionar la tecla H">
+        <span>👁️ Modo OBS</span>
+        <kbd class="bg-gray-950 text-gray-400 px-1.5 py-0.5 rounded text-[10px]">H</kbd>
+      </button>
+    </div>
+  </div>
+
+  <!-- Aviso flotante breve cuando se activa el Modo OBS -->
+  <div id="obs-toast" class="fixed top-5 left-1/2 -translate-x-1/2 z-30 bg-black/85 text-white text-xs font-semibold px-4 py-2 rounded-full border border-white/15 opacity-0 pointer-events-none transition-opacity duration-300">
+    Modo OBS Transparente activado • Presiona <span class="text-indigo-400 font-bold">H</span> para volver a mostrar los controles
+  </div>
+
+  <!-- Canvas principal a 60fps -->
+  <canvas id="stage"></canvas>
+
+  <!-- Panel inferior de simulación de regalos -->
+  <div class="ui-panel fixed bottom-5 left-1/2 -translate-x-1/2 z-20 w-[95%] max-w-2xl">
+    <div class="bg-gray-900/90 backdrop-blur-xl border border-gray-700/80 p-3.5 rounded-3xl shadow-2xl">
+      <div class="flex items-center justify-between px-2 mb-2.5">
+        <span class="text-[11px] font-bold uppercase tracking-wider text-gray-400">Simulador de Regalos TikTok LIVE</span>
+        <span id="last-event-label" class="text-xs font-medium text-indigo-300">Listo para testear</span>
+      </div>
+
+      <div class="grid grid-cols-2 sm:grid-cols-5 gap-2.5">
+        <!-- Botón Rosa -->
+        <button onclick="triggerGift('rose')" class="gift-btn flex flex-col items-center justify-center bg-gradient-to-b from-pink-500/20 to-rose-600/30 hover:from-pink-500/30 hover:to-rose-600/40 border border-pink-500/40 rounded-2xl py-3 px-2 cursor-pointer">
+          <span class="text-2xl mb-1">🌹</span>
+          <span class="text-xs font-bold text-pink-200">Rosa</span>
+          <span class="text-[10px] text-pink-300/70">Lluvia & Aura</span>
+        </button>
+
+        <!-- Botón Dona -->
+        <button onclick="triggerGift('donut')" class="gift-btn flex flex-col items-center justify-center bg-gradient-to-b from-amber-500/20 to-orange-600/30 hover:from-amber-500/30 hover:to-orange-600/40 border border-amber-500/40 rounded-2xl py-3 px-2 cursor-pointer">
+          <span class="text-2xl mb-1">🍩</span>
+          <span class="text-xs font-bold text-amber-200">Dona</span>
+          <span class="text-[10px] text-amber-300/70">Rebote Físico</span>
+        </button>
+
+        <!-- Botón Galaxia -->
+        <button onclick="triggerGift('galaxy')" class="gift-btn flex flex-col items-center justify-center bg-gradient-to-b from-purple-500/25 to-indigo-700/40 hover:from-purple-500/35 hover:to-indigo-700/50 border border-purple-400/50 rounded-2xl py-3 px-2 cursor-pointer">
+          <span class="text-2xl mb-1">🌌</span>
+          <span class="text-xs font-bold text-purple-200">Galaxia</span>
+          <span class="text-[10px] text-purple-300/70">Agujero Negro</span>
+        </button>
+
+        <!-- Botón Fantasma -->
+        <button onclick="triggerGift('ghost')" class="gift-btn flex flex-col items-center justify-center bg-gradient-to-b from-cyan-500/20 to-slate-700/40 hover:from-cyan-500/30 hover:to-slate-700/50 border border-cyan-400/40 rounded-2xl py-3 px-2 cursor-pointer">
+          <span class="text-2xl mb-1">👻</span>
+          <span class="text-xs font-bold text-cyan-200">Fantasma</span>
+          <span class="text-[10px] text-cyan-300/70">Acecho Atrás</span>
+        </button>
+
+        <!-- Botón Combo Loco -->
+        <button onclick="triggerCombo()" class="gift-btn col-span-2 sm:col-span-1 flex flex-col items-center justify-center bg-gradient-to-br from-indigo-600 to-fuchsia-600 hover:from-indigo-500 hover:to-fuchsia-500 border border-white/20 rounded-2xl py-3 px-2 cursor-pointer shadow-lg">
+          <span class="text-2xl mb-1">⚡</span>
+          <span class="text-xs font-extrabold text-white">Combo Loco</span>
+          <span class="text-[10px] text-white/80">¡Todo junto!</span>
+        </button>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    /**
+     * ============================================================================
+     * MOTOR VISUAL Y DE FÍSICAS PARA OVERLAY DE TIKTOK LIVE (60 FPS)
+     * ============================================================================
+     */
+    const canvas = document.getElementById('stage');
+    const ctx = canvas.getContext('2d');
+
+    let width = window.innerWidth;
+    let height = window.innerHeight;
+
+    // Ajuste responsivo de pantalla Retina / High-DPI
+    function resizeCanvas() {
+      const dpr = window.devicePixelRatio || 1;
+      width = window.innerWidth;
+      height = window.innerHeight;
+      canvas.width = width * dpr;
+      canvas.height = height * dpr;
+      ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    }
+    window.addEventListener('resize', resizeCanvas);
+    resizeCanvas();
+
+    // Estado global del personaje central (PNGTuber)
+    const character = {
+      image: null,          // Imagen subida por el usuario (si existe)
+      baseRadius: 115,      // Radio base de colisión y dibujo
+      userScale: 1.0,       // Escala elegida en el slider
+      squishX: 1.0,         // Deformación horizontal por impactos (donas)
+      squishY: 1.0,         // Deformación vertical por impactos
+      velSquishX: 0,
+      velSquishY: 0,
+      fearTimer: 0,         // Temporizador de temblor (Fantasmas)
+      pinkAuraTimer: 0,     // Temporizador de brillo rosado (Rosas)
+      // Estado de absorción de Galaxia
+      galaxyState: 'idle',  // 'idle' | 'sucking' | 'vanished' | 'returning'
+      galaxyTimer: 0,
+      galaxyScale: 1.0,
+      galaxyRotation: 0,
+      galaxyOffsetX: 0,
+      galaxyOffsetY: 0
+    };
+
+    // Efectos de ambiente y cámara
+    let screenShake = 0;
+    let ambientBlueTimer = 0;
+    let galaxyVortex = {
+      active: false,
+      timer: 0,
+      maxTimer: 4.5,
+      rotation: 0,
+      scale: 0
+    };
+
+    // Capas de entidades (Detrás y Delante del personaje)
+    const backEntities = [];   // Fantasmas, pétalos traseros, vórtice
+    const frontEntities = [];  // Donas con física, rosas delanteras, corazones, partículas
+
+    // ============================================================================
+    // CARGA DE IMAGEN PERSONALIZADA DEL USUARIO
+    // ============================================================================
+    document.getElementById('avatar-upload').addEventListener('change', (e) => {
+      const file = e.target.files[0];
+      if (!file) return;
+      const reader = new FileReader();
+      reader.onload = (event) => {
+        const img = new Image();
+        img.onload = () => {
+          character.image = img;
+          updateStatus('¡Tu PNGTuber cargado con éxito!');
+        };
+        img.src = event.target.result;
+      };
+      reader.readAsDataURL(file);
+    });
+
+    document.getElementById('size-slider').addEventListener('input', (e) => {
+      character.userScale = parseFloat(e.target.value);
+    });
+
+    // ============================================================================
+    // MODO OBS TRANSPARENTE (TECLA 'H' O BOTÓN)
+    // ============================================================================
+    const obsToast = document.getElementById('obs-toast');
+    let toastTimeout = null;
+
+    function toggleObsMode() {
+      const isObs = document.body.classList.toggle('obs-mode');
+      if (isObs) {
+        obsToast.style.opacity = '1';
+        clearTimeout(toastTimeout);
+        toastTimeout = setTimeout(() => {
+          obsToast.style.opacity = '0';
+        }, 2800);
+      } else {
+        obsToast.style.opacity = '0';
+      }
+    }
+
+    document.getElementById('btn-obs-mode').addEventListener('click', toggleObsMode);
+    window.addEventListener('keydown', (e) => {
+      if (e.key.toLowerCase() === 'h') {
+        toggleObsMode();
+      }
+    });
+
+    function updateStatus(text) {
+      document.getElementById('last-event-label').textContent = text;
+    }
+
+    // ============================================================================
+    // GENERADORES DE REGALOS Y REACCIONES FÍSICAS
+    // ============================================================================
+    function triggerGift(type) {
+      const cx = width / 2;
+      const cy = height * 0.52;
+
+      if (type === 'rose') {
+        updateStatus('🌹 ¡Te enviaron una Rosa!');
+        character.pinkAuraTimer = 3.2;
+
+        // Lluvia de rosas adelante y atrás
+        for (let i = 0; i < 22; i++) {
+          const isBack = i % 3 === 0;
+          const targetList = isBack ? backEntities : frontEntities;
+          targetList.push({
+            type: 'rose',
+            x: cx + (Math.random() - 0.5) * (width * 0.75),
+            y: -40 - Math.random() * 260,
+            vx: (Math.random() - 0.5) * 90,
+            vy: 110 + Math.random() * 140,
+            swayFreq: 2 + Math.random() * 3,
+            swayAmp: 30 + Math.random() * 40,
+            phase: Math.random() * Math.PI * 2,
+            rotation: Math.random() * Math.PI * 2,
+            vRot: (Math.random() - 0.5) * 4,
+            size: isBack ? 24 + Math.random() * 12 : 32 + Math.random() * 16,
+            alpha: 1,
+            life: 4.5
+          });
+        }
+
+        // Corazones subiendo desde el personaje
+        for (let i = 0; i < 10; i++) {
+          frontEntities.push({
+            type: 'heart',
+            x: cx + (Math.random() - 0.5) * 140,
+            y: cy + (Math.random() - 0.5) * 80,
+            vx: (Math.random() - 0.5) * 60,
+            vy: -90 - Math.random() * 110,
+            size: 18 + Math.random() * 14,
+            alpha: 1,
+            life: 2.2
+          });
+        }
+      }
+
+      if (type === 'donut') {
+        updateStatus('🍩 ¡Lluvia de Donas con rebote!');
+        // Dispara una tanda de 5 donas que caen sobre la cabeza del personaje
+        for (let i = 0; i < 5; i++) {
+          setTimeout(() => {
+            frontEntities.push({
+              type: 'donut',
+              x: cx + (Math.random() - 0.5) * 160,
+              y: -60 - Math.random() * 80,
+              vx: (Math.random() - 0.5) * 120,
+              vy: 180 + Math.random() * 120,
+              radius: 28 + Math.random() * 8,
+              rotation: Math.random() * Math.PI * 2,
+              vRot: (Math.random() - 0.5) * 8,
+              bounced: false,
+              life: 4.0
+            });
+          }, i * 130);
+        }
+      }
+
+      if (type === 'galaxy') {
+        updateStatus('🌌 ¡GALAXIA! Absorbiendo personaje...');
+        galaxyVortex.active = true;
+        galaxyVortex.timer = galaxyVortex.maxTimer;
+        screenShake = 14;
+
+        // Inicia la succión del personaje hacia el agujero negro
+        character.galaxyState = 'sucking';
+        character.galaxyTimer = 0;
+
+        // Estrellas y polvo cósmico siendo succionados hacia el centro
+        for (let i = 0; i < 55; i++) {
+          const angle = Math.random() * Math.PI * 2;
+          const dist = 160 + Math.random() * 340;
+          frontEntities.push({
+            type: 'star_suck',
+            angle: angle,
+            dist: dist,
+            speed: 180 + Math.random() * 220,
+            angularSpeed: 3.5 + Math.random() * 3,
+            size: 2 + Math.random() * 4,
+            color: ['#c084fc', '#818cf8', '#f472b6', '#38bdf8', '#ffffff'][Math.floor(Math.random() * 5)],
+            life: 3.5
+          });
+        }
+      }
+
+      if (type === 'ghost') {
+        updateStatus('👻 ¡Fantasmas acechando detrás!');
+        character.fearTimer = 4.0;
+        ambientBlueTimer = 4.0;
+
+        // Fantasmas en la capa TRASERA (detrás del personaje)
+        const count = 4;
+        for (let i = 0; i < count; i++) {
+          const side = i % 2 === 0 ? -1 : 1;
+          backEntities.push({
+            type: 'ghost',
+            anchorOffsetX: side * (95 + Math.random() * 75),
+            anchorOffsetY: -45 + (Math.random() - 0.5) * 90,
+            x: cx + side * 260,
+            y: cy + 40,
+            phase: Math.random() * Math.PI * 2,
+            size: 62 + Math.random() * 22,
+            alpha: 0,
+            life: 4.2,
+            maxLife: 4.2
+          });
+        }
+      }
+    }
+
+    function triggerCombo() {
+      updateStatus('⚡ ¡COMBO LOCO ACTIVADO!');
+      triggerGift('ghost');
+      triggerGift('rose');
+      setTimeout(() => triggerGift('donut'), 250);
+      setTimeout(() => triggerGift('donut'), 650);
+      setTimeout(() => triggerGift('galaxy'), 1100);
+    }
+
+    // ============================================================================
+    // INTEGRACIÓN PREPARADA PARA TIKFINITY WEBSOCKET (ws://localhost:21213)
+    // ============================================================================
+    let ws = null;
+    let wsEnabled = false;
+    const btnWsToggle = document.getElementById('btn-ws-toggle');
+    const wsDot = document.getElementById('ws-dot');
+    const wsStatus = document.getElementById('ws-status');
+
+    btnWsToggle.addEventListener('click', () => {
+      if (wsEnabled) {
+        wsEnabled = false;
+        if (ws) ws.close();
+        wsDot.className = 'w-3 h-3 rounded-full bg-amber-400 animate-pulse';
+        wsStatus.textContent = 'Modo Prueba Local';
+        btnWsToggle.textContent = 'Conectar TikFinity (WS)';
+        btnWsToggle.className = 'text-xs bg-indigo-600 hover:bg-indigo-500 text-white font-semibold px-3 py-1.5 rounded-xl transition cursor-pointer';
+      } else {
+        connectTikFinity();
+      }
+    });
+
+    function connectTikFinity() {
+      wsEnabled = true;
+      wsStatus.textContent = 'Conectando a TikFinity...';
+      btnWsToggle.textContent = 'Desconectar';
+      btnWsToggle.className = 'text-xs bg-rose-600 hover:bg-rose-500 text-white font-semibold px-3 py-1.5 rounded-xl transition cursor-pointer';
+
+      try {
+        ws = new WebSocket('ws://localhost:21213/');
+
+        ws.onopen = () => {
+          wsDot.className = 'w-3 h-3 rounded-full bg-emerald-400';
+          wsStatus.textContent = 'Conectado a TikFinity LIVE';
+          updateStatus('✅ Escuchando regalos de TikTok LIVE...');
+        };
+
+        ws.onmessage = (event) => {
+          try {
+            const payload = JSON.parse(event.data);
+            // TikFinity envía eventos con structure { event: 'gift', data: { giftName: 'Rose', ... } }
+            if (payload.event === 'gift' && payload.data) {
+              const name = (payload.data.giftName || '').toLowerCase();
+              const repeatCount = payload.data.repeatCount || 1;
+
+              if (name.includes('rose') || name.includes('rosa')) {
+                triggerGift('rose');
+              } else if (name.includes('donut') || name.includes('dona')) {
+                triggerGift('donut');
+              } else if (name.includes('galaxy') || name.includes('galaxia')) {
+                triggerGift('galaxy');
+              } else if (name.includes('ghost') || name.includes('fantasma')) {
+                triggerGift('ghost');
+              } else {
+                // Cualquier otro regalo dispara rosas por defecto para que siempre reaccione
+                triggerGift('rose');
+              }
+            }
+          } catch (err) {
+            console.warn('Mensaje WS no procesado:', err);
+          }
+        };
+
+        ws.onerror = () => {
+          wsDot.className = 'w-3 h-3 rounded-full bg-rose-500';
+          wsStatus.textContent = 'TikFinity no detectado (abre TikFinity)';
+        };
+
+        ws.onclose = () => {
+          if (wsEnabled) {
+            wsDot.className = 'w-3 h-3 rounded-full bg-rose-500';
+            wsStatus.textContent = 'Desconectado - Reintentando en 4s...';
+            setTimeout(() => {
+              if (wsEnabled) connectTikFinity();
+            }, 4000);
+          }
+        };
+      } catch (e) {
+        wsStatus.textContent = 'Error al iniciar WebSocket';
+      }
+    }
+
+    // ============================================================================
+    // DIBUJO DEL PERSONAJE CENTRAL (AVATAR POR DEFECTO O PNG DEL USUARIO)
+    // ============================================================================
+    function drawCharacter(ctx, cx, cy, time) {
+      if (character.galaxyState === 'vanished') return;
+
+      const radius = character.baseRadius * character.userScale;
+
+      // Respiración suave (idle)
+      const idleBreathY = Math.sin(time * 2.8) * 0.025;
+      const idleFloatY = Math.sin(time * 2.8) * 5;
+
+      // Temblor si hay fantasmas acechando
+      let fearX = 0;
+      let fearY = 0;
+      if (character.fearTimer > 0) {
+        fearX = (Math.random() - 0.5) * 14;
+        fearY = (Math.random() - 0.5) * 10;
+      }
+
+      ctx.save();
+      ctx.translate(cx + character.galaxyOffsetX + fearX, cy + idleFloatY + character.galaxyOffsetY + fearY);
+      ctx.rotate(character.galaxyRotation);
+
+      // Escala combinando tamaño, aplastamiento por impacto y absorción de galaxia
+      const finalScaleX = character.userScale * character.squishX * (1 - idleBreathY * 0.5) * character.galaxyScale;
+      const finalScaleY = character.userScale * character.squishY * (1 + idleBreathY) * character.galaxyScale;
+      ctx.scale(finalScaleX, finalScaleY);
+
+      // Aura rosada cuando caen rosas
+      if (character.pinkAuraTimer > 0) {
+        const auraAlpha = Math.min(1, character.pinkAuraTimer) * 0.55;
+        const grad = ctx.createRadialGradient(0, 0, 40, 0, 0, 165);
+        grad.addColorStop(0, `rgba(244, 114, 182, ${auraAlpha})`);
+        grad.addColorStop(1, 'rgba(244, 114, 182, 0)');
+        ctx.fillStyle = grad;
+        ctx.beginPath();
+        ctx.arc(0, 0, 165, 0, Math.PI * 2);
+        ctx.fill();
+      }
+
+      if (character.image) {
+        // Dibuja el PNG cargado por el usuario manteniendo proporción
+        const maxDim = 250;
+        const aspect = character.image.width / character.image.height;
+        let drawW = maxDim;
+        let drawH = maxDim;
+        if (aspect > 1) {
+          drawH = maxDim / aspect;
+        } else {
+          drawW = maxDim * aspect;
+        }
+
+        // Sombra suave debajo del PNG
+        ctx.shadowColor = 'rgba(0, 0, 0, 0.45)';
+        ctx.shadowBlur = 18;
+        ctx.shadowOffsetY = 10;
+
+        ctx.drawImage(character.image, -drawW / 2, -drawH / 2, drawW, drawH);
+      } else {
+        // Avatar PNGTuber simpático por defecto (Gato/Fantasma gamer con auriculares)
+        ctx.shadowColor = 'rgba(0, 0, 0, 0.45)';
+        ctx.shadowBlur = 20;
+        ctx.shadowOffsetY = 10;
+
+        // Orejas
+        ctx.fillStyle = '#f8fafc';
+        ctx.beginPath();
+        ctx.moveTo(-78, -45);
+        ctx.lineTo(-92, -115);
+        ctx.lineTo(-28, -82);
+        ctx.closePath();
+        ctx.fill();
+
+        ctx.beginPath();
+        ctx.moveTo(78, -45);
+        ctx.lineTo(92, -115);
+        ctx.lineTo(28, -82);
+        ctx.closePath();
+        ctx.fill();
+
+        // Interior orejas
+        ctx.fillStyle = '#fda4af';
+        ctx.beginPath();
+        ctx.moveTo(-70, -52);
+        ctx.lineTo(-80, -98);
+        ctx.lineTo(-38, -76);
+        ctx.closePath();
+        ctx.fill();
+
+        ctx.beginPath();
+        ctx.moveTo(70, -52);
+        ctx.lineTo(80, -98);
+        ctx.lineTo(38, -76);
+        ctx.closePath();
+        ctx.fill();
+
+        // Cabeza principal
+        ctx.fillStyle = '#ffffff';
+        ctx.beginPath();
+        ctx.ellipse(0, 0, 105, 92, 0, 0, Math.PI * 2);
+        ctx.fill();
+
+        ctx.shadowColor = 'transparent';
+
+        // Vincha de auriculares gamer
+        ctx.strokeStyle = '#4f46e5';
+        ctx.lineWidth = 12;
+        ctx.beginPath();
+        ctx.arc(0, -8, 108, Math.PI * 1.08, Math.PI * 1.92);
+        ctx.stroke();
+
+        // Copas de auriculares
+        ctx.fillStyle = '#312e81';
+        ctx.beginPath();
+        ctx.roundRect(-122, -32, 24, 64, 12);
+        ctx.roundRect(98, -32, 24, 64, 12);
+        ctx.fill();
+
+        ctx.fillStyle = '#818cf8';
+        ctx.beginPath();
+        ctx.roundRect(-117, -20, 10, 40, 5);
+        ctx.roundRect(107, -20, 10, 40, 5);
+        ctx.fill();
+
+        // Expresión facial dinámica según lo que esté pasando
+        const isScared = character.fearTimer > 0;
+        const isSucked = character.galaxyState === 'sucking';
+        const isSquished = Math.abs(character.squishY - 1) > 0.08;
+
+        // Ojos
+        ctx.fillStyle = '#1e1b4b';
+        if (isSucked || isSquished) {
+          // Ojos en X (> <) cuando le pega una dona o lo chupa la galaxia
+          ctx.strokeStyle = '#1e1b4b';
+          ctx.lineWidth = 6;
+          ctx.lineCap = 'round';
+          // Ojo izq >
+          ctx.beginPath();
+          ctx.moveTo(-52, -16);
+          ctx.lineTo(-32, -4);
+          ctx.lineTo(-52, 8);
+          ctx.stroke();
+          // Ojo der <
+          ctx.beginPath();
+          ctx.moveTo(52, -16);
+          ctx.lineTo(32, -4);
+          ctx.lineTo(52, 8);
+          ctx.stroke();
+        } else if (isScared) {
+          // Ojos bien abiertos de susto
+          ctx.beginPath();
+          ctx.arc(-40, -6, 17, 0, Math.PI * 2);
+          ctx.arc(40, -6, 17, 0, Math.PI * 2);
+          ctx.fill();
+
+          ctx.fillStyle = '#ffffff';
+          ctx.beginPath();
+          ctx.arc(-43, -10, 6, 0, Math.PI * 2);
+          ctx.arc(37, -10, 6, 0, Math.PI * 2);
+          ctx.fill();
+        } else {
+          // Ojos normales tiernos con brillo
+          ctx.beginPath();
+          ctx.ellipse(-40, -4, 13, 16, 0, 0, Math.PI * 2);
+          ctx.ellipse(40, -4, 13, 16, 0, 0, Math.PI * 2);
+          ctx.fill();
+
+          ctx.fillStyle = '#ffffff';
+          ctx.beginPath();
+          ctx.arc(-44, -10, 5, 0, Math.PI * 2);
+          ctx.arc(36, -10, 5, 0, Math.PI * 2);
+          ctx.fill();
+        }
+
+        // Mejillas sonrojadas
+        ctx.fillStyle = character.pinkAuraTimer > 0 ? 'rgba(244, 63, 94, 0.55)' : 'rgba(251, 113, 133, 0.35)';
+        ctx.beginPath();
+        ctx.ellipse(-62, 18, 16, 9, 0, 0, Math.PI * 2);
+        ctx.ellipse(62, 18, 16, 9, 0, 0, Math.PI * 2);
+        ctx.fill();
+
+        // Boca
+        ctx.strokeStyle = '#1e1b4b';
+        ctx.lineWidth = 5;
+        ctx.lineCap = 'round';
+        if (isScared || isSucked) {
+          // Boca gritando O
+          ctx.fillStyle = '#fb7185';
+          ctx.beginPath();
+          ctx.ellipse(0, 26, 12, 16, 0, 0, Math.PI * 2);
+          ctx.fill();
+          ctx.stroke();
+        } else {
+          // Boquita de gato :3
+          ctx.beginPath();
+          ctx.arc(-9, 18, 9, 0.1 * Math.PI, 0.9 * Math.PI);
+          ctx.stroke();
+          ctx.beginPath();
+          ctx.arc(9, 18, 9, 0.1 * Math.PI, 0.9 * Math.PI);
+          ctx.stroke();
+        }
+      }
+
+      ctx.restore();
+    }
+
+    // ============================================================================
+    // DIBUJO DEL VÓRTICE DE GALAXIA (AGUJERO NEGRO DETRÁS DEL PERSONAJE)
+    // ============================================================================
+    function drawGalaxyVortex(ctx, cx, cy, dt) {
+      if (!galaxyVortex.active) return;
+
+      galaxyVortex.timer -= dt;
+      galaxyVortex.rotation += dt * 4.5;
+
+      // Animación de apertura y cierre suave del vórtice
+      const progress = 1 - (galaxyVortex.timer / galaxyVortex.maxTimer);
+      if (progress < 0.15) {
+        galaxyVortex.scale = progress / 0.15;
+      } else if (progress > 0.8) {
+        galaxyVortex.scale = Math.max(0, (1 - progress) / 0.2);
+      } else {
+        galaxyVortex.scale = 1;
+      }
+
+      if (galaxyVortex.timer <= 0) {
+        galaxyVortex.active = false;
+        return;
+      }
+
+      ctx.save();
+      ctx.translate(cx, cy);
+      ctx.scale(galaxyVortex.scale, galaxyVortex.scale);
+      ctx.rotate(galaxyVortex.rotation);
+
+      // Halo exterior cósmico
+      const outerGrad = ctx.createRadialGradient(0, 0, 20, 0, 0, 260);
+      outerGrad.addColorStop(0, 'rgba(15, 23, 42, 0.98)');
+      outerGrad.addColorStop(0.28, 'rgba(88, 28, 135, 0.85)');
+      outerGrad.addColorStop(0.55, 'rgba(79, 70, 229, 0.45)');
+      outerGrad.addColorStop(0.8, 'rgba(236, 72, 153, 0.2)');
+      outerGrad.addColorStop(1, 'rgba(0, 0, 0, 0)');
+
+      ctx.fillStyle = outerGrad;
+      ctx.beginPath();
+      ctx.arc(0, 0, 260, 0, Math.PI * 2);
+      ctx.fill();
+
+      // Brazos espirales de la galaxia
+      for (let arm = 0; arm < 4; arm++) {
+        ctx.save();
+        ctx.rotate((arm * Math.PI) / 2);
+        ctx.strokeStyle = arm % 2 === 0 ? 'rgba(192, 132, 252, 0.65)' : 'rgba(56, 189, 248, 0.55)';
+        ctx.lineWidth = 10;
+        ctx.lineCap = 'round';
+        ctx.beginPath();
+        for (let t = 0.2; t < 3.6; t += 0.15) {
+          const r = t * 58;
+          const x = Math.cos(t * 1.4) * r;
+          const y = Math.sin(t * 1.4) * r;
+          if (t === 0.2) ctx.moveTo(x, y);
+          else ctx.lineTo(x, y);
+        }
+        ctx.stroke();
+        ctx.restore();
+      }
+
+      // Núcleo negro absoluto
+      ctx.fillStyle = '#030712';
+      ctx.beginPath();
+      ctx.arc(0, 0, 56, 0, Math.PI * 2);
+      ctx.fill();
+
+      ctx.strokeStyle = '#e879f9';
+      ctx.lineWidth = 3;
+      ctx.stroke();
+
+      ctx.restore();
+    }
+
+    // ============================================================================
+    // BUCLE PRINCIPAL DE ACTUALIZACIÓN Y RENDERIZADO (60 FPS)
+    // ============================================================================
+    let lastTime = performance.now();
+
+    function loop(now) {
+      const dt = Math.min(0.05, (now - lastTime) / 1000);
+      lastTime = now;
+      const time = now / 1000;
+
+      ctx.clearRect(0, 0, width, height);
+
+      // Aplicar sacudida de cámara si está activa
+      ctx.save();
+      if (screenShake > 0.2) {
+        const sx = (Math.random() - 0.5) * screenShake;
+        const sy = (Math.random() - 0.5) * screenShake;
+        ctx.translate(sx, sy);
+        screenShake *= Math.pow(0.04, dt);
+      } else {
+        screenShake = 0;
+      }
+
+      // Neblina azulada cuando aparecen fantasmas
+      if (ambientBlueTimer > 0) {
+        ambientBlueTimer -= dt;
+        const blueAlpha = Math.min(1, ambientBlueTimer) * 0.22;
+        const fogGrad = ctx.createRadialGradient(width / 2, height / 2, 80, width / 2, height / 2, width * 0.7);
+        fogGrad.addColorStop(0, 'rgba(34, 211, 238, 0)');
+        fogGrad.addColorStop(1, `rgba(8, 145, 178, ${blueAlpha})`);
+        ctx.fillStyle = fogGrad;
+        ctx.fillRect(0, 0, width, height);
+      }
+
+      const cx = width / 2;
+      const cy = height * 0.52;
+      const charHitRadius = character.baseRadius * character.userScale * 0.85;
+
+      // Actualizar temporizadores del personaje
+      if (character.fearTimer > 0) character.fearTimer -= dt;
+      if (character.pinkAuraTimer > 0) character.pinkAuraTimer -= dt;
+
+      // Física de resorte para el aplastamiento (Squish & Stretch al recibir donas)
+      const springK = 180;
+      const damping = 11;
+      const forceX = (1 - character.squishX) * springK;
+      const forceY = (1 - character.squishY) * springK;
+      character.velSquishX = (character.velSquishX + forceX * dt) * Math.exp(-damping * dt);
+      character.velSquishY = (character.velSquishY + forceY * dt) * Math.exp(-damping * dt);
+      character.squishX += character.velSquishX * dt;
+      character.squishY += character.velSquishY * dt;
+
+      // Máquina de estados de absorción de Galaxia
+      if (character.galaxyState === 'sucking') {
+        character.galaxyTimer += dt;
+        const p = Math.min(1, character.galaxyTimer / 1.15);
+        character.galaxyScale = Math.max(0, 1 - Math.pow(p, 1.6));
+        character.galaxyRotation += dt * (6 + p * 18);
+        if (p >= 1) {
+          character.galaxyState = 'vanished';
+          character.galaxyTimer = 0;
+        }
+      } else if (character.galaxyState === 'vanished') {
+        character.galaxyTimer += dt;
+        // Permanece desaparecido 2.2 segundos dentro de la galaxia
+        if (character.galaxyTimer >= 2.2) {
+          character.galaxyState = 'returning';
+          character.galaxyTimer = 0;
+          character.galaxyRotation = 0;
+        }
+      } else if (character.galaxyState === 'returning') {
+        character.galaxyTimer += dt;
+        const p = Math.min(1, character.galaxyTimer / 0.45);
+        // Efecto "Pop" elástico al volver a aparecer
+        const elastic = 1 - Math.pow(1 - p, 3) + Math.sin(p * Math.PI) * 0.25;
+        character.galaxyScale = elastic;
+        if (p >= 1) {
+          character.galaxyState = 'idle';
+          character.galaxyScale = 1.0;
+        }
+      }
+
+      // ------------------------------------------------------------------------
+      // 1. CAPA TRASERA (Detrás del personaje: Vórtice Galaxia, Fantasmas, Pétalos)
+      // ------------------------------------------------------------------------
+      drawGalaxyVortex(ctx, cx, cy, dt);
+
+      for (let i = backEntities.length - 1; i >= 0; i--) {
+        const ent = backEntities[i];
+        ent.life -= dt;
+        if (ent.life <= 0) {
+          backEntities.splice(i, 1);
+          continue;
+        }
+
+        if (ent.type === 'ghost') {
+          // Se acerca flotando por detrás de los hombros del personaje
+          const targetX = cx + ent.anchorOffsetX * character.userScale + Math.sin(time * 2.5 + ent.phase) * 22;
+          const targetY = cy + ent.anchorOffsetY * character.userScale + Math.cos(time * 3.1 + ent.phase) * 18;
+          ent.x += (targetX - ent.x) * Math.min(1, dt * 3.5);
+          ent.y += (targetY - ent.y) * Math.min(1, dt * 3.5);
+
+          // Fade in y fade out suave
+          const elapsed = ent.maxLife - ent.life;
+          if (elapsed < 0.5) ent.alpha = elapsed / 0.5;
+          else if (ent.life < 0.7) ent.alpha = ent.life / 0.7;
+          else ent.alpha = 0.88;
+
+          ctx.save();
+          ctx.globalAlpha = ent.alpha;
+          ctx.font = `${ent.size}px serif`;
+          ctx.textAlign = 'center';
+          ctx.textBaseline = 'middle';
+          ctx.shadowColor = 'rgba(34, 211, 238, 0.8)';
+          ctx.shadowBlur = 18;
+          ctx.fillText('👻', ent.x, ent.y);
+          ctx.restore();
+        }
+
+        if (ent.type === 'rose') {
+          ent.y += ent.vy * dt;
+          ent.x += (ent.vx + Math.sin(time * ent.swayFreq + ent.phase) * ent.swayAmp) * dt;
+          ent.rotation += ent.vRot * dt;
+
+          ctx.save();
+          ctx.globalAlpha = Math.min(1, ent.life);
+          ctx.translate(ent.x, ent.y);
+          ctx.rotate(ent.rotation);
+          ctx.font = `${ent.size}px serif`;
+          ctx.textAlign = 'center';
+          ctx.textBaseline = 'middle';
+          ctx.fillText('🌹', 0, 0);
+          ctx.restore();
+        }
+      }
+
+      // ------------------------------------------------------------------------
+      // 2. PERSONAJE CENTRAL (PNGTuber)
+      // ------------------------------------------------------------------------
+      drawCharacter(ctx, cx, cy, time);
+
+      // ------------------------------------------------------------------------
+      // 3. CAPA DELANTERA (Donas con colisión, Rosas, Corazones, Estrellas)
+      // ------------------------------------------------------------------------
+      for (let i = frontEntities.length - 1; i >= 0; i--) {
+        const ent = frontEntities[i];
+        ent.life -= dt;
+        if (ent.life <= 0 || ent.y > height + 120) {
+          frontEntities.splice(i, 1);
+          continue;
+        }
+
+        if (ent.type === 'donut') {
+          // Gravedad real
+          ent.vy += 980 * dt;
+          ent.x += ent.vx * dt;
+          ent.y += ent.vy * dt;
+          ent.rotation += ent.vRot * dt;
+
+          // Detección de colisión circular con la cabeza del personaje
+          if (character.galaxyState === 'idle') {
+            const dx = ent.x - cx;
+            const dy = ent.y - cy;
+            const dist = Math.hypot(dx, dy);
+            const minDist = charHitRadius + ent.radius * 0.75;
+
+            if (dist < minDist && ent.vy > 0) {
+              // Normal de choque
+              const nx = dx / (dist || 1);
+              const ny = dy / (dist || 1);
+
+              // Empujar fuera para que no se quede pegada
+              ent.x = cx + nx * minDist;
+              ent.y = cy + ny * minDist;
+
+              // Rebote hacia arriba y hacia los costados
+              const speed = Math.hypot(ent.vx, ent.vy) * 0.72;
+              const bounceAngle = Math.atan2(ny, nx) + (Math.random() - 0.5) * 0.4;
+              ent.vx = Math.cos(bounceAngle) * speed + (dx >= 0 ? 140 : -140);
+              ent.vy = -Math.abs(Math.sin(bounceAngle) * speed) - 180;
+              ent.vRot = (dx >= 0 ? 1 : -1) * (10 + Math.random() * 6);
+
+              // Deformar al personaje por el golpe en la cabeza
+              character.squishX = 1.24;
+              character.squishY = 0.78;
+              screenShake = Math.max(screenShake, 7);
+            }
+          }
+
+          ctx.save();
+          ctx.translate(ent.x, ent.y);
+          ctx.rotate(ent.rotation);
+          ctx.font = `${ent.radius * 2}px serif`;
+          ctx.textAlign = 'center';
+          ctx.textBaseline = 'middle';
+          ctx.shadowColor = 'rgba(0,0,0,0.35)';
+          ctx.shadowBlur = 10;
+          ctx.fillText('🍩', 0, 0);
+          ctx.restore();
+        }
+
+        if (ent.type === 'rose') {
+          ent.y += ent.vy * dt;
+          ent.x += (ent.vx + Math.sin(time * ent.swayFreq + ent.phase) * ent.swayAmp) * dt;
+          ent.rotation += ent.vRot * dt;
+
+          ctx.save();
+          ctx.globalAlpha = Math.min(1, ent.life);
+          ctx.translate(ent.x, ent.y);
+          ctx.rotate(ent.rotation);
+          ctx.font = `${ent.size}px serif`;
+          ctx.textAlign = 'center';
+          ctx.textBaseline = 'middle';
+          ctx.fillText('🌹', 0, 0);
+          ctx.restore();
+        }
+
+        if (ent.type === 'heart') {
+          ent.x += ent.vx * dt;
+          ent.y += ent.vy * dt;
+          ctx.save();
+          ctx.globalAlpha = Math.min(1, ent.life / 1.2);
+          ctx.font = `${ent.size}px serif`;
+          ctx.textAlign = 'center';
+          ctx.textBaseline = 'middle';
+          ctx.fillText('💖', ent.x, ent.y);
+          ctx.restore();
+        }
+
+        if (ent.type === 'star_suck') {
+          ent.dist -= ent.speed * dt;
+          ent.angle += ent.angularSpeed * dt;
+          if (ent.dist <= 15) {
+            frontEntities.splice(i, 1);
+            continue;
+          }
+          const sx = cx + Math.cos(ent.angle) * ent.dist;
+          const sy = cy + Math.sin(ent.angle) * ent.dist;
+
+          ctx.save();
+          ctx.fillStyle = ent.color;
+          ctx.shadowColor = ent.color;
+          ctx.shadowBlur = 8;
+          ctx.beginPath();
+          ctx.arc(sx, sy, ent.size, 0, Math.PI * 2);
+          ctx.fill();
+          ctx.restore();
+        }
+      }
+
+      ctx.restore();
+      requestAnimationFrame(loop);
+    }
+
+    // Iniciar bucle de animación al cargar
+    window.onload = () => {
+      requestAnimationFrame(loop);
+    };
+  </script>
+</body>
+</html>
